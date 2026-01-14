@@ -182,10 +182,9 @@ def main():
     lat_range = parse_range(args.lat)
     lon_range = parse_range(args.lon)
 
-    path_execution = Path(__file__).parent
     animate(
-        path_execution / args.input,
-        path_execution / args.output,
+        args.input,
+        args.output,
         tmax=args.tmax,
         tstep=args.tstep,
         lat_range=lat_range,
