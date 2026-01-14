@@ -1,5 +1,7 @@
 *.grib
 *.idx
+*.nc
+*.mp4
 
 __pycache__/
 gribs/
