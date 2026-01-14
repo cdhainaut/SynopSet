@@ -11,7 +11,7 @@ def have(tool: str) -> bool:
 
 def open_normalize(path: str | Path) -> xr.Dataset:
     """Open a GRIB/NetCDF with xarray, harmonize dims to (time, latitude, longitude)."""
-    ds = xr.open_dataset(path, chunks={"time": 50, "latitude": 200, "longitude": 200})
+    ds = xr.open_dataset(path, chunks={"time": 200, "latitude": 200, "longitude": 200})
     if "time" not in ds.dims:
         if "valid_time" in ds.coords:
             ds = ds.rename({"valid_time": "time"})
