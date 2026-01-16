@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.png" alt="SynopSet logo" width="520">
+  <img src="assets/logo.png" alt="SynopSet logo" width="620">
 </p>
 Reducing weather scenario sets for efficient and robust performance optimisation of wind-assisted ships.
 
