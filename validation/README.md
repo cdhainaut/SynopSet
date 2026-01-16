@@ -26,7 +26,7 @@ Benchmarks the routing-oriented trade-off between:
 - **stride** (`--config-*-stride-hours`)
 - **distance metric** (`--config-*-metric`: `euclid` vs `dtw`)
 
-**Purpose**
+**Purpose**  
 Extract **representative windows (medoids/representatives)** and **cluster weights** for use in routing optimization, while quantifying:
 - feasibility / runtime
 - representativeness (how well representatives summarize windows)
@@ -61,20 +61,18 @@ Let:
 - `N` ≈ number of windows
 - `d` = embedding dimension (PCA components)
 
-Number of windows:
-
-```text
-N ≈ 1 + floor((T - L) / S)
-```
+Number of windows:\
+$$
+N \approx 1 + \left\lfloor \frac{T - L}{S} \right\rfloor
+$$
 
 ### Euclidean clustering (scalable)
 
 Windows are represented as sequences (length `L`, dimension `d`) and clustered in a time-aligned space.
-Typical cost scales roughly like:
-
-```text
-Cost ≈ O(N * L * d * I)
-```
+A typical cost scales roughly like:\
+$$
+\text{Cost} \approx O(N \cdot L \cdot d \cdot I)
+$$
 
 where `I` is an iteration factor (algorithm-dependent).
 
@@ -82,17 +80,15 @@ where `I` is an iteration factor (algorithm-dependent).
 
 ### DTW + medoids (expensive)
 
-DTW distance between two windows is roughly:
+DTW distance between two windows scales roughly as:\
+$$
+\text{Pairwise DTW cost} \approx O(L^2 \cdot d)
+$$
 
-```text
-Pairwise DTW cost ≈ O(L^2 * d)
-```
-
-and medoid/PAM-like approaches require many pairwise comparisons:
-
-```text
-Total DTW+PAM cost ≈ O(N^2 * L^2 * d)
-```
+and medoid/PAM-like approaches require many pairwise comparisons:\
+$$
+\text{Total DTW+PAM cost} \approx O(N^2 \cdot L^2 \cdot d)
+$$
 
 **Main driver:** `N^2` — so small stride becomes quickly infeasible for DTW.
 
@@ -105,8 +101,7 @@ This is why the benchmark includes a safety guard: `--dtw-max-windows`.
 - **Too short windows:** capture snapshots but miss evolution (front passage, veer/shift, transitions).
 - **Too long windows:** mix multiple regimes; clusters become less “pure” and representatives less meaningful.
 
-A good starting point:
-**`window_hours` ≈ routing decision horizon**, or slightly larger.
+A good starting point: **`window_hours` ≈ routing decision horizon**, or slightly larger.
 
 ---
 
@@ -132,24 +127,22 @@ The benchmark is not centered on label stability (ARI). Instead it measures:
 - number of windows (`num_windows`)
 - clustering time (`time_clustering_sec`) and total time (`time_total_sec`)
 
-2) **Representativeness (comparable Euclid vs DTW)**
-Instead of mixing incompatible scales (centroid L2 vs DTW), we report a **distance-to-representative per time step**:
+2) **Representativeness (comparable Euclid vs DTW)**  
+Instead of mixing incompatible scales (centroid L2 vs DTW), we report a **distance-to-representative per time step**.
 
-- **Euclid** (time-aligned representative):
+- **Euclid** (time-aligned representative):\
+$$
+d_{\text{euclid-per-step}}(x,m)=\frac{1}{L}\sum_{t=1}^{L}\left\|x_t-m_t\right\|_2
+$$
 
-```text
-d_euclid_per_step(x, m) = mean_t ||x_t - m_t||_2
-```
-
-- **DTW** (warped representative):
-
-```text
-d_dtw_per_step(x, m) = DTW(x, m) / L
-```
+- **DTW** (warped representative):\
+$$
+d_{\text{dtw-per-step}}(x,m)=\frac{\mathrm{DTW}(x,m)}{L}
+$$
 
 This yields comparable magnitudes across metrics.
 
-3) **Timing coherence (routing-critical proxy)**
+3) **Timing coherence (routing-critical proxy)**  
 A practical timing proxy is computed by:
 - finding the time offset of the maximum magnitude of **PC1** inside each window
 - measuring dispersion **inside clusters**
@@ -198,17 +191,42 @@ High timing dispersion suggests clusters may mix windows where key events occur 
 
 ### PCA variance study
 ```bash
-python pca_variance_study.py   --input merged.nc   --vars u10,v10,mwd,mwp,swh   --max-components 200   --out-dir pca_variance_study_out
+python pca_variance_study.py \
+  --input merged.nc \
+  --vars u10,v10,mwd,mwp,swh \
+  --max-components 200 \
+  --out-dir pca_variance_study_out
 ```
 
 ### Trade-off benchmark (Euclid ONLY, fast)
 ```bash
-python window_stride_metric_benchmark.py   --input merged.nc   --vars u10,v10,mwd,mwp,swh   --window-hours 170   --clusters 20   --run A   --config-a-metric euclid --config-a-stride-hours 12   --max-components 100   --log-level INFO   --out-dir tradeoff_out_euclid
+python window_stride_metric_benchmark.py \
+  --input merged.nc \
+  --vars u10,v10,mwd,mwp,swh \
+  --window-hours 170 \
+  --clusters 20 \
+  --run A \
+  --config-a-metric euclid --config-a-stride-hours 12 \
+  --max-components 100 \
+  --log-level INFO \
+  --out-dir tradeoff_out_euclid
 ```
 
 ### Trade-off benchmark (Euclid vs DTW)
 ```bash
-python window_stride_metric_benchmark.py   --input merged.nc   --vars u10,v10,mwd,mwp,swh   --window-hours 170   --clusters 12   --run both   --config-a-metric euclid --config-a-stride-hours 12   --config-b-metric dtw    --config-b-stride-hours 48   --max-components 100   --dtw-pam-iters 8   --dtw-max-windows 300   --log-level INFO   --out-dir tradeoff_out_euclid_vs_dtw
+python window_stride_metric_benchmark.py \
+  --input merged.nc \
+  --vars u10,v10,mwd,mwp,swh \
+  --window-hours 170 \
+  --clusters 12 \
+  --run both \
+  --config-a-metric euclid --config-a-stride-hours 12 \
+  --config-b-metric dtw    --config-b-stride-hours 48 \
+  --max-components 100 \
+  --dtw-pam-iters 8 \
+  --dtw-max-windows 300 \
+  --log-level INFO \
+  --out-dir tradeoff_out_euclid_vs_dtw
 ```
 
 ---
@@ -249,14 +267,14 @@ python window_stride_metric_benchmark.py   --input merged.nc   --vars u10,v10,mw
 - `clusters_csv` : path to per-cluster CSV
 
 **Routing-oriented quality metrics**
-- `timing_std_weighted_mean` : weighted mean of within-cluster timing dispersion  
+- `timing_std_weighted_mean` : weighted mean of within-cluster timing dispersion.  
   Lower is better if you want consistent event timing relative to departure.
-- `timing_std_p90_clusters` : 90th percentile of timing dispersion across clusters  
+- `timing_std_p90_clusters` : 90th percentile of timing dispersion across clusters.  
   High value indicates some clusters are “timing-mixed”.
 
-- `distance_per_step_mean` : weighted mean distance-to-representative per time step  
+- `distance_per_step_mean` : weighted mean distance-to-representative per time step.  
   Comparable between Euclid and DTW; lower means representatives summarize better.
-- `distance_per_step_p90` : 90th percentile of per-cluster mean distance-to-representative  
+- `distance_per_step_p90` : 90th percentile of per-cluster mean distance-to-representative.  
   Identifies “poorly represented” clusters.
 
 - `min_cluster_size` : smallest cluster size (windows)
@@ -283,14 +301,14 @@ python window_stride_metric_benchmark.py   --input merged.nc   --vars u10,v10,mw
 - `distance_per_step_p90` : p90 per-window distance-to-representative (tail / outliers)
 
 **Representative window**
-- `representative_window_index` : window index chosen as representative  
+- `representative_window_index` : window index chosen as representative.  
   Euclid: closest-to-centroid window; DTW: medoid window.
 - `representative_start_time`, `representative_end_time` : representative window time range
 - `representative_score` : within-cluster centrality score of the representative (often ~1.0 by construction)
 
 ---
 
-## Final recommendation
+## Final recommendation (best validation)
 
 The best validation is routing-based:
 
