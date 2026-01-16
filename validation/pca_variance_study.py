@@ -1,179 +1,211 @@
-import numpy as np
+from __future__ import annotations
+
+import argparse
+from pathlib import Path
+
 import matplotlib.pyplot as plt
-from sklearn.decomposition import IncrementalPCA
-from sklearn.metrics import adjusted_rand_score
-
-from meteo_scenario.windows import build_windows
-from meteo_scenario.clustering import cluster_sequences_euclid, cluster_sequences_dtw
-
-import xarray as xr
+import numpy as np
 import pandas as pd
+import xarray as xr
+
+from meteo_scenario.io import (
+    fit_ipca_stream,
+    open_normalize,
+    standardize_over_time,
+)
+from meteo_scenario.windows import build_windows
 
 
-# -------------------------------------------------------------------
-# Helper: flatten dataset as (time, features) WITHOUT loading into RAM
-# -------------------------------------------------------------------
-def ds_to_2d_lazy(ds_std, vars_list):
-    """
-    Returns a Dask-backed 2D array (time, features)
-    by stacking the (var, lat, lon) dims.
-    """
-    arr = ds_std[vars_list].to_array()  # (var, time, lat, lon)
-    da2 = arr.stack(features=("variable", "latitude", "longitude")).transpose(
-        "time", "features"
+def _parse_comma_list(text: str) -> list[str]:
+    return [item.strip() for item in str(text).split(",") if item.strip()]
+
+
+def _parse_component_grid(component_grid_text: str) -> list[int]:
+    """Parse a comma-separated list of component counts."""
+    component_counts: list[int] = []
+    for token in _parse_comma_list(component_grid_text):
+        try:
+            value = int(token)
+        except ValueError as exc:
+            raise ValueError(f"Invalid integer in --component-grid: '{token}'") from exc
+        if value <= 0:
+            raise ValueError("All values in --component-grid must be >= 1")
+        component_counts.append(value)
+
+    if not component_counts:
+        raise ValueError("--component-grid produced an empty list")
+
+    # Ensure unique + sorted for stable plots
+    component_counts = sorted(set(component_counts))
+    return component_counts
+
+
+def _ensure_variables_present(
+    *, dataset: xr.Dataset, variable_names: list[str]
+) -> None:
+    missing = [name for name in variable_names if name not in dataset.data_vars]
+    if missing:
+        raise KeyError(
+            "Missing variables in dataset: "
+            # + ", ".join(missing)
+            + ". Available: "
+            + ", ".join(map(str, dataset.data_vars))
+        )
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Study PCA component count impact on clustering stability. "
+            "Fits ONE streaming IncrementalPCA, transforms ONCE to a memmap, then evaluates "
+            "Euclidean vs DTW clustering stability across a component grid (ARI metric)."
+        )
     )
-    return da2
 
+    parser.add_argument(
+        "--input",
+        type=str,
+        default="merged.nc",
+        help="Path to merged GRIB/NetCDF dataset.",
+    )
 
-def fit_incremental_pca(da2, batch_size, n_comp):
-    ipca = IncrementalPCA(n_components=n_comp)
+    parser.add_argument(
+        "--vars",
+        type=str,
+        default="u10,v10,mwd,mwp,swh",
+        help="Comma-separated variables to include.",
+    )
 
-    T = da2.sizes["time"]
-    buffer = []
+    parser.add_argument(
+        "--component-grid",
+        type=str,
+        default="5,20,40,80,120,150,200",
+        help="Comma-separated list of PCA component counts to evaluate.",
+    )
 
-    for start in range(0, T, batch_size):
-        stop = min(start + batch_size, T)
-        Xb = da2[start:stop].compute()
+    parser.add_argument(
+        "--max-components",
+        type=int,
+        default=200,
+        help=(
+            "Maximum number of PCA components to fit/transform. "
+            "Must be >= max(--component-grid)."
+        ),
+    )
 
-        buffer.append(Xb)
+    parser.add_argument(
+        "--time-batch-size",
+        type=int,
+        default=300,
+        help="Time batch size used for streaming flatten/PCA fit/transform.",
+    )
 
-        # empile les batchs dans le buffer
-        Xbuf = np.vstack(buffer)
+    parser.add_argument(
+        "--fit-sample-rate",
+        type=float,
+        default=1.0,
+        help="Fraction of timesteps used for IPCA fit (0<r<=1).",
+    )
 
-        # Vérifie si on a assez de samples pour partial_fit
-        if Xbuf.shape[0] >= n_comp:
-            ipca.partial_fit(Xbuf)
-            buffer = []  # reset
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help="Random seed used for IPCA fitting subsampling.",
+    )
 
-    return ipca
+    parser.add_argument(
+        "--out-dir",
+        type=str,
+        default="pca_variance_study_out",
+        help="Output directory for memmap and plots.",
+    )
 
+    args = parser.parse_args()
 
-def transform_incremental(da2, ipca, batch_size):
-    T = da2.sizes["time"]
-    embed_full = np.zeros((T, ipca.n_components), dtype=np.float32)
+    input_path = Path(args.input)
+    output_directory = Path(args.out_dir)
+    output_directory.mkdir(parents=True, exist_ok=True)
 
-    for start in range(0, T, batch_size):
-        stop = min(start + batch_size, T)
-        Xb = da2[start:stop].compute()
-        embed_full[start:stop] = ipca.transform(Xb)
+    variable_names = _parse_comma_list(args.vars)
+    component_grid = _parse_component_grid(args.component_grid)
 
-    return embed_full
+    if int(args.max_components) < max(component_grid):
+        raise ValueError(
+            f"--max-components={int(args.max_components)} must be >= max(--component-grid)={max(component_grid)}"
+        )
 
+    # ------------------------------------------------------------------
+    # Load + standardize (same logic as reduce.py, via shared function)
+    # ------------------------------------------------------------------
+    dataset_original = open_normalize(path=input_path)
+    _ensure_variables_present(dataset=dataset_original, variable_names=variable_names)
 
-# -------------------------------------------------------------------
-# Main
-# -------------------------------------------------------------------
-def main():
-    PATH = "merged.nc"
+    dataset_selected = dataset_original[variable_names].sortby(
+        ["latitude", "longitude", "time"]
+    )
+    dataset_standardized = standardize_over_time(ds=dataset_selected)
 
-    # ---------------------------------------------------------------
-    # Load dataset chunked (avoids RAM blow)
-    # ---------------------------------------------------------------
-    ds = xr.open_dataset(PATH, chunks={"time": 200, "latitude": 200, "longitude": 200})
+    print("[INFO] Dataset loaded and standardized")
+    print(dataset_standardized)
 
-    keep = ["u10", "v10", "mwd", "mwp", "swh"]
-    ds = ds[keep]
+    # ------------------------------------------------------------------
+    # Fit ONE streaming IPCA with max components
+    # ------------------------------------------------------------------
+    print(
+        f"[INFO] Fitting IncrementalPCA with max_components={int(args.max_components)} (streaming)..."
+    )
 
-    # Standardize
-    mean_t = ds.mean("time")
-    std_t = xr.where(ds.std("time") == 0, 1.0, ds.std("time"))
+    ipca = fit_ipca_stream(
+        ds_standardized=dataset_standardized,
+        variable_names=list(dataset_standardized.data_vars),
+        time_batch_size=int(args.time_batch_size),
+        requested_components=int(args.max_components),
+        fit_sample_rate=float(args.fit_sample_rate),
+        seed=int(args.seed),
+    )
 
-    ds_std = ((ds - mean_t) / std_t).astype("float32").fillna(0.0)
+    explained_variance_ratio = np.asarray(ipca.explained_variance_ratio_, dtype=float)
+    cumulative_explained_variance = np.cumsum(explained_variance_ratio)
 
-    vars_list = keep
-    times = pd.DatetimeIndex(ds_std.time.values)
+    # ------------------------------------------------------------------
+    # Evaluate clustering stability across component counts
+    # ------------------------------------------------------------------
+    cumulative_variance_at_components: list[float] = []
 
-    # ---------------------------------------------------------------
-    # Build windows for clustering
-    # ---------------------------------------------------------------
-    wins = build_windows(times, 170, 24)
-    k = 6  # or 4, 8…
+    for num_components in component_grid:
+        print(f"\n[INFO] Evaluating n_components={int(num_components)}")
 
-    # ---------------------------------------------------------------
-    # Flatten: (time, features) - DASK LAZY OPERATION
-    # ---------------------------------------------------------------
-    da2 = ds_to_2d_lazy(ds_std, vars_list)
-    T = da2.sizes["time"]
-    print("Flattened shape:", da2)
+        cumulative_variance_at_components.append(
+            float(cumulative_explained_variance[int(num_components) - 1])
+        )
 
-    # ---------------------------------------------------------------
-    # Fit ONE PCA with max components
-    # ---------------------------------------------------------------
-    n_components_max = 200
-    batch_size = 300  # safe: loads 200 timesteps at a time
+    # ------------------------------------------------------------------
+    # Save study results (CSV + plots)
+    # ------------------------------------------------------------------
+    results_table = pd.DataFrame(
+        {
+            "n_components": component_grid,
+            "cumulative_explained_variance": cumulative_variance_at_components,
+        }
+    )
 
-    print(f"Fitting IncrementalPCA with {n_components_max} components...")
-    ipca = fit_incremental_pca(da2, batch_size, n_components_max)
+    results_csv_path = output_directory / "pca_variance_study_results.csv"
+    results_table.to_csv(results_csv_path, index=False)
+    print(f"\n[OK] Results CSV → {results_csv_path}")
 
-    # Full explained variance
-    explained_full = ipca.explained_variance_ratio_
-    cumexp = np.cumsum(explained_full)
-
-    # ---------------------------------------------------------------
-    # Transform ONCE to get embed_full(time, n_components_max)
-    # ---------------------------------------------------------------
-    print("Transforming full dataset through PCA...")
-    embed_full = transform_incremental(da2, ipca, batch_size)
-
-    # ---------------------------------------------------------------
-    # Component grid for plots
-    # ---------------------------------------------------------------
-    component_grid = [5, 20, 40, 80, 120, 150, 200]
-
-    ARI_euclid = []
-    ARI_dtw = []
-    ref_e, ref_d = None, None
-    variance_list = []
-
-    for nc in component_grid:
-        print(f"\nProcessing n_components = {nc}")
-        variance_list.append(float(cumexp[nc - 1]))
-
-        embed_nc = embed_full[:, :nc]
-
-        # Clustering sequences
-        seq_list = [embed_nc[s : e + 1] for (s, e) in wins]
-
-        # Euclid
-        labs_e, _, _ = cluster_sequences_euclid(seq_list, k)
-        labs_e = np.array(labs_e)
-        if ref_e is None:
-            ref_e = labs_e
-            ARI_euclid.append(1.0)
-        else:
-            ARI_euclid.append(adjusted_rand_score(ref_e, labs_e))
-
-        # DTW
-        labs_d, _, _ = cluster_sequences_dtw(seq_list, k)
-        labs_d = np.array(labs_d)
-        if ref_d is None:
-            ref_d = labs_d
-            ARI_dtw.append(1.0)
-        else:
-            ARI_dtw.append(adjusted_rand_score(ref_d, labs_d))
-
-    # ---------------------------------------------------------------
-    # PLOTS
-    # ---------------------------------------------------------------
+    # Plot: variance explained
+    variance_plot_path = output_directory / "pca_variance_explained.png"
     plt.figure()
-    plt.plot(component_grid, ARI_euclid, marker="o", label="Euclid")
-    plt.plot(component_grid, ARI_dtw, marker="o", label="DTW")
-    plt.xlabel("n_components")
-    plt.ylabel("ARI")
-    plt.title("Cluster stability (Euclid vs DTW)")
-    plt.grid(True)
-    plt.legend()
-    plt.savefig("pca_cluster_stability_euclid_vs_dtw.png", dpi=200)
-
-    plt.figure()
-    plt.plot(component_grid, variance_list, marker="o")
+    plt.plot(component_grid, cumulative_variance_at_components, marker="o")
     plt.xlabel("n_components")
     plt.ylabel("Cumulative explained variance")
-    plt.title("Variance explained")
+    plt.title("PCA cumulative explained variance")
     plt.grid(True)
-    plt.savefig("pca_variance.png", dpi=200)
+    plt.savefig(variance_plot_path, dpi=200)
+    print(f"[OK] Plot → {variance_plot_path}")
 
-    print("\nDone.")
+    print("\n[DONE]")
 
 
 if __name__ == "__main__":
