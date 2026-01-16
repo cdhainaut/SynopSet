@@ -2,6 +2,8 @@
 *.idx
 *.nc
 *.mp4
+*.csv
+*.memmap
 
 __pycache__/
 gribs/
