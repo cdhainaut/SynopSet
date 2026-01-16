@@ -61,18 +61,20 @@ Let:
 - `N` ≈ number of windows
 - `d` = embedding dimension (PCA components)
 
-Number of windows:\
-$$
+Number of windows:
+
+```math
 N \approx 1 + \left\lfloor \frac{T - L}{S} \right\rfloor
-$$
+```
 
 ### Euclidean clustering (scalable)
 
 Windows are represented as sequences (length `L`, dimension `d`) and clustered in a time-aligned space.
-A typical cost scales roughly like:\
-$$
+A typical cost scales roughly like:
+
+```math
 \text{Cost} \approx O(N \cdot L \cdot d \cdot I)
-$$
+```
 
 where `I` is an iteration factor (algorithm-dependent).
 
@@ -80,15 +82,17 @@ where `I` is an iteration factor (algorithm-dependent).
 
 ### DTW + medoids (expensive)
 
-DTW distance between two windows scales roughly as:\
-$$
-\text{Pairwise DTW cost} \approx O(L^2 \cdot d)
-$$
+DTW distance between two windows scales roughly as:
 
-and medoid/PAM-like approaches require many pairwise comparisons:\
-$$
+```math
+\text{Pairwise DTW cost} \approx O(L^2 \cdot d)
+```
+
+and medoid/PAM-like approaches require many pairwise comparisons:
+
+```math
 \text{Total DTW+PAM cost} \approx O(N^2 \cdot L^2 \cdot d)
-$$
+```
 
 **Main driver:** `N^2` — so small stride becomes quickly infeasible for DTW.
 
@@ -130,15 +134,17 @@ The benchmark is not centered on label stability (ARI). Instead it measures:
 2) **Representativeness (comparable Euclid vs DTW)**  
 Instead of mixing incompatible scales (centroid L2 vs DTW), we report a **distance-to-representative per time step**.
 
-- **Euclid** (time-aligned representative):\
-$$
-d_{\text{euclid-per-step}}(x,m)=\frac{1}{L}\sum_{t=1}^{L}\left\|x_t-m_t\right\|_2
-$$
+- **Euclid** (time-aligned representative):
 
-- **DTW** (warped representative):\
-$$
+```math
+d_{\text{euclid-per-step}}(x,m)=\frac{1}{L}\sum_{t=1}^{L}\left\|x_t-m_t\right\|_2
+```
+
+- **DTW** (warped representative):
+
+```math
 d_{\text{dtw-per-step}}(x,m)=\frac{\mathrm{DTW}(x,m)}{L}
-$$
+```
 
 This yields comparable magnitudes across metrics.
 
