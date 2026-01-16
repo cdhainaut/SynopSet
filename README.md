@@ -1,138 +1,110 @@
+# SynopSet
+Reducing weather scenario sets for efficient and robust performance optimisation of wind-assisted ships.
 
-# 🌊 Meteo-Scenarios  
-**Reducing weather scenario sets for efficient and robust performance optimisation of wind-assisted ships**
+## Summary
+**SynopSet** is an open-source Python package that builds **reduced, representative sets of meteorological scenarios** from GRIB/NetCDF archives.
+It is designed for studies where coupling **weather variability** with **routing / performance simulation / optimisation** becomes computationally expensive.
 
----
+The core idea is to:
+1. harmonise datasets (grid + time),
+2. build sliding **time windows**,
+3. embed each timestep (optional streaming PCA),
+4. cluster windows (Euclidean or DTW-based),
+5. export **representative windows** (medoids/representatives) and **cluster weights** for downstream optimisation.
 
-## 🧭 Overview
+## Scientific context
+Optimising wind-assisted ship performance under realistic meteorology often requires running routing/performance models across large ensembles (multi-month to multi-year).
+Brute-force evaluation is statistically robust, but quickly becomes prohibitive when embedded in design optimisation, operational routing, or fleet studies.
 
-**Meteo-Scenarios** is an open-source Python package developed for the study and optimisation of **Wind-Assisted Ships (WASP)** under realistic meteorological variability.  
-It provides a complete and reproducible framework for **scenario reduction**, **time-series clustering**, and **synoptic-scale weather analysis**.
+This repository implements a **synoptic-scale scenario reduction** workflow based on clustering meteorological windowed sequences (e.g. 10 m wind, significant wave height).
+It can be used to approximate the full ensemble using a small set of representative windows plus weights.
 
-The objective is to reduce the computational burden associated with large-scale weather scenario sets, which often involve thousands of simulated voyages, while retaining the essential **statistical and dynamical variability** of the original data.
+## Method overview
+- Data harmonisation: consistent grid, time axis, variable naming.
+- Windowing: generate overlapping or non-overlapping time windows.
+- Embedding:
+  - raw flattening (baseline, large dimensionality), or
+  - streaming `IncrementalPCA` (recommended for large grids / many variables).
+- Clustering:
+  - **Euclidean** distance (time-aligned, scalable; good when event timing relative to departure matters),
+  - **DTW + medoids** (robust to phase shifts; more expensive; can mix different event timings inside a window).
+- Outputs:
+  - representative windows (exportable as GRIB2 and/or NetCDF),
+  - per-window labels and per-time labels (majority vote),
+  - cluster weights (count-based and/or quality-weighted).
 
-By identifying **representative synoptic sequences** using clustering techniques such as **MiniBatch K-Means** and **Dynamic Time Warping (DTW) + PAM medoids**, the method enables efficient yet robust performance prediction, design optimisation, and mission-level analysis of wind-assisted vessels.
-
----
-
-## 🔬 Scientific Context
-
-Performance prediction and optimisation of wind-assisted ships typically rely on **multi-year weather scenario ensembles**.  
-Brute-force evaluation ensures statistical robustness but becomes **computationally prohibitive** when coupled with ship design optimisation, routing simulation, or fleet-level planning.
-
-This package introduces a methodology for **synoptic scenario reduction** based on clustering of meteorological time-series windows.  
-Each window represents a sequence of spatial weather states (e.g. 10 m wind, significant wave height), clustered according to similarity metrics tailored to time series:
-
-- **Euclidean distance** for rapid analysis via MiniBatch K-Means  
-- **Dynamic Time Warping (DTW)** for alignment-invariant temporal comparison, combined with **Partitioning Around Medoids (PAM)** for robust representative selection
-
-The reduced scenario sets preserve both the **statistical diversity** and the **seasonality** of the original data, while reducing routing computations by **orders of magnitude**.
-
-Such reduced sets can reproduce voyage-time and fuel-consumption distributions with high fidelity, making **joint design–routing optimisation** of WASP tractable in realistic industrial studies.
-
----
-
-## ⚙️ Key Capabilities
-
-- **Aggregation** of multiple GRIB/NetCDF datasets onto a unified grid and timeline  
-- **Sliding-window sequence generation** and feature embedding (with optional PCA)  
-- **Clustering** with K-Means or DTW+PAM medoids  
-- **Export** of representative medoid scenarios as GRIB2 and CSV summaries  
-- **Validation tools** for spatial maps and local time-series diagnostics  
-- **Mission-level analysis** enabling integration of design, routing, and fleet-planning decisions under uncertainty
-
----
-
-## 📚 Related Research
-
-This package builds on methods widely used in other domains for time-series aggregation and uncertainty reduction:
-
-- Paparrizos, J., *et al.* (2024). *Bridging Time Series Data Mining and Deep Learning via Representation Learning: A Survey.*  
-- Teichgräber, H., *et al.* (2022). *Time-Series Aggregation for Energy System Design: Review and Application.*  
-- Yerbury, E., *et al.* (2025). *Comparing Clustering Techniques for Renewable Energy Forecasting.*  
-- Wei, L., *et al.* (2022). *Joint Design and Routing Optimization for Wind-Assisted Ships.*  
-- Meng, Q., *et al.* (2014). *Containership Routing and Scheduling under Weather Uncertainty.*  
-- Cao, J., *et al.* (2025). *Risk-Aware Fleet-Level Optimisation under Weather Uncertainty.*
-
----
-
-## 🧩 Repository Structure
-
-```bash
-meteo-scenarios/
-├─ src/meteo_scenarios/
-│  ├─ io.py              # I/O utils (open, export GRIB, normalize dims)
-│  ├─ gridtime.py        # Temporal & spatial alignment
-│  ├─ clustering.py      # KMeans & DTW-PAM
-│  ├─ windows.py         # Sliding window generation
-│  ├─ export.py          # GRIB exports + label handling
-│  ├─ plotting.py        # Maps & probe diagnostics
-│  └─ cli/
-│     ├─ aggregate.py    # meteo-aggregate
-│     ├─ reduce.py       # meteo-reduce
-│     ├─ plot_map.py     # meteo-plot-map
-│     └─ probe.py        # meteo-probe
+## Repository structure
+```text
+.
+├─ src/
+│  └─ meteo_scenario/
+│     ├─ io.py              # I/O (open, normalize, export)
+│     ├─ gridtime.py        # Spatial/temporal alignment helpers
+│     ├─ windows.py         # Sliding window generation
+│     ├─ clustering.py      # Euclidean + DTW/PAM clustering utilities
+│     ├─ export.py          # Label mapping, summaries, dataset export
+│     ├─ plotting.py        # Maps & diagnostics (optional)
+│     └─ cli/
+│        ├─ aggregate.py    # meteo-aggregate
+│        ├─ reduce.py       # meteo-reduce
+│        ├─ plot_map.py     # meteo-plot-map
+│        └─ probe.py        # meteo-probe
+├─ validation/
+│  ├─ README.md             # Validation notes (publication-oriented)
+│  ├─ pca_variance_study.py
+│  └─ window_stride_metric_benchmark.py
 └─ examples/
    ├─ 01_merge_wind_wave.sh
    ├─ 02_reduce_sequences.sh
    └─ 03_probe_plots.sh
-
 ```
 
-## 🚀 Typical Workflow
+## Typical workflow
 
-### 1 - Merge heterogeneous meteorological datasets
+### 1) Merge heterogeneous meteorological datasets
 ```bash
-meteo-aggregate \
-  --in "gribs/wind_2020.grib" \
-  --in "gribs/wave_2020.grib" \
-  --target-grid finer \
-  --time-mode freq --time-freq 12H \
-  --out merged_12H.grib2
-
+meteo-aggregate   --in "gribs/wind_2020.grib"   --in "gribs/wave_2020.grib"   --target-grid finer   --time-mode freq --time-freq 12H   --out merged_12H.grib2
 ```
 
-### 2 - Reduce to representative synoptic scenarios
+### 2) Reduce to representative synoptic scenarios
 ```bash
-meteo-reduce merged_12H.grib2 \
-  --vars u10,v10 \
-  --window-hours 72 \
-  --stride-hours 24 \
-  --clusters 6 \
-  --seq-metric euclid \
-  --out reduced/
+meteo-reduce merged_12H.grib2   --vars u10,v10   --window-hours 72   --stride-hours 24   --clusters 6   --seq-metric euclid   --out reduced/
 ```
 
-### 3 - Visualise and validate
+To use DTW (note: cost increases quickly with the number of windows):
+```bash
+meteo-reduce merged_12H.grib2   --vars u10,v10   --window-hours 72   --stride-hours 48   --clusters 6   --seq-metric dtw   --out reduced_dtw/
+```
+
+### 3) Visualise and validate
 ```bash
 meteo-plot-map reduced/original_with_cluster_id.grib2
-meteo-probe reduced/original_with_cluster_id.grib2 \
-  --probe-lat 45.0 --probe-lon -20.0 \
-  --plot-out probe.png
 
+meteo-probe reduced/original_with_cluster_id.grib2   --probe-lat 45.0 --probe-lon -20.0   --plot-out probe.png
 ```
 
-## 🔧 Installation
+## Validation studies
+See `validation/README.md` for:
+- PCA variance study (choose `--max-components` rationally),
+- window/stride/metric benchmark (Euclid vs DTW trade-off for routing use).
 
+These scripts are **not part of the public package API**; they exist for reproducibility and publication-quality figures/tables.
+
+## Installation
 ```bash
-git clone https://github.com/cdhainaut/meteo-clustering.git
+git clone https://github.com/cdhainaut/synopset.git
 cd meteo-clustering
 pip install -e .
-
 ```
-  
-## 🧠 Research Scope
 
+## Research scope
 This tool supports studies on:
+- scenario reduction for performance prediction of wind-assisted ships,
+- design–routing coupling under uncertain meteorological forcing,
+- fleet/mission-level optimisation,
+- uncertainty quantification and robust decision-making for maritime decarbonisation.
 
-* Scenario reduction for performance prediction of WASP
-* Design–routing coupling under uncertain meteorological forcing
-* Fleet-level and mission-level optimisation
-* Uncertainty quantification and robust decision-making for maritime decarbonisation
-
-The resulting datasets and models can be used as reproducible inputs for optimisation frameworks, routing solvers, or Monte-Carlo performance assessment.
-
-## 🧾 Citation
+## Citation
 If you use this package in your research, please cite:
 
 ```bibtex
