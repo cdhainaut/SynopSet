@@ -93,7 +93,7 @@ These scripts are **not part of the public package API**; they exist for reprodu
 ## Installation
 ```bash
 git clone https://github.com/cdhainaut/synopset.git
-cd meteo-clustering
+cd synopset
 pip install -e .
 ```
 
