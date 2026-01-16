@@ -314,7 +314,7 @@ python window_stride_metric_benchmark.py \
 
 ---
 
-## Final recommendation (best validation)
+## Final recommendation
 
 The best validation is routing-based:
 
