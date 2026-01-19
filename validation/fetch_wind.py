@@ -1,5 +1,4 @@
-from nomad.environment import GRIB
-from nomad.tools.era5_downloader import ERA5Downloader
+from synopset.era5_downloader import ERA5Downloader
 from pathlib import Path
 import numpy as np
 
